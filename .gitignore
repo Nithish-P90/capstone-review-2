@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+
+# Env
+.env
+
+# Models
+.cache/
+*.bin
+*.pt
+*.safetensors
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# Local state
+last_run.json
