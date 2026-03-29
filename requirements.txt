@@ -1,0 +1,11 @@
+# NVD ingestion (teammates)
+nvdlib
+python-dotenv
+qdrant-client
+sentence-transformers
+
+# Security dataset preprocessing (this module)
+requests
+tqdm
+datasets
+huggingface_hub
