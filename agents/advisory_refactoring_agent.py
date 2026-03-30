@@ -5,15 +5,16 @@ import re
 from rich.progress import track
 from agents.categorization_agent import call_ollama
 
-_FIXED_RE  = re.compile(r'FIXED:\s*```(?:c|cpp)?\s*(.*?)```', re.DOTALL | re.IGNORECASE)
+_FIXED_RE  = re.compile(r'FIXED:\s*```(?:c|cpp|python)?\s*(.*?)```', re.DOTALL | re.IGNORECASE)
 _CHANGE_RE = re.compile(r'CHANGE:\s*(.+)',                    re.DOTALL)
 
 
-def build_advisory_prompt(code: str, cwe_id: str, explanation: str) -> str:
-    return f"""You are a C security expert. Provide a minimal, correct fix for this vulnerability.
+def build_advisory_prompt(code: str, cwe_id: str, explanation: str, language: str = "C") -> str:
+    lang_lower = language.lower()
+    return f"""You are a {language} security expert. Provide a minimal, correct fix for this vulnerability.
 
 Vulnerable code:
-```c
+```{lang_lower}
 {code}
 ```
 
@@ -54,6 +55,7 @@ def advise_finding(finding: dict) -> dict:
             finding["code"],
             finding["cwe_id"],
             finding.get("explanation", finding["description"]),
+            language=finding.get("language", "C"),
         )
         response = call_ollama(prompt)
         advisory = parse_advisory_response(response)

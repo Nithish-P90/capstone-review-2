@@ -165,6 +165,7 @@ def _render_html(findings: list, scan_meta: dict, stats: dict) -> str:
     file_path = html.escape(scan_meta.get("file_path", "unknown"))
     n_funcs   = scan_meta.get("functions_scanned", 0)
     timestamp = html.escape(scan_meta.get("scan_timestamp", datetime.now().isoformat()))
+    language  = html.escape(scan_meta.get("language", "C/C++"))
 
     summary_cards = f"""
 <div class="summary">
@@ -212,11 +213,11 @@ def _render_html(findings: list, scan_meta: dict, stats: dict) -> str:
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Security Scan — {file_path}</title>
+  <title>{language} Security Scan — {file_path}</title>
   <style>{_CSS}</style>
 </head>
 <body>
-  <h1>🔍 Security Scan Report</h1>
+  <h1>🔍 {language} Security Scan Report</h1>
   <div class="meta">
     <span>📄 {file_path}</span>
     <span>🕐 {timestamp}</span>

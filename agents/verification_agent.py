@@ -19,7 +19,8 @@ def verify_finding(finding: dict):
     Returns the enriched finding dict, or None if discarded.
     """
     try:
-        result = query_dataset(finding["code"], finding["cwe_id"], top_k=10)
+        result = query_dataset(finding["code"], finding["cwe_id"], top_k=10,
+                               language=finding.get("language", "C"))
     except Exception as e:
         console.print(f"[yellow]  [verification] Dataset query failed for "
                       f"{finding['function_name']}: {e}[/yellow]")

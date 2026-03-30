@@ -75,6 +75,65 @@ def _extract_functions(text: str, file_path: str) -> list:
     return functions
 
 
+def parse_python_file(file_path: str) -> list:
+    """
+    Parse a Python source file and extract all function definitions
+    (including async functions) using the stdlib ast module.
+
+    Parameters
+    ----------
+    file_path : str
+        Path to a .py file.
+
+    Returns
+    -------
+    list of dict with keys: name, code, start_line, end_line, file_path
+    Returns [] on any read or syntax error.
+    """
+    import ast as _ast
+
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            source = f.read()
+    except (OSError, IOError) as e:
+        print(f"[ast_parser] Cannot read {file_path}: {e}")
+        return []
+
+    try:
+        tree = _ast.parse(source, filename=file_path)
+    except SyntaxError as e:
+        print(f"[ast_parser] SyntaxError in {file_path}: {e}")
+        return []
+
+    functions = []
+    for node in _ast.walk(tree):
+        if not isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+            continue
+
+        start_line = node.lineno
+        end_line   = getattr(node, "end_lineno", node.lineno)
+
+        # Extract source text for this function
+        code = _ast.get_source_segment(source, node)
+        if code is None:
+            # Fallback for Python < 3.8
+            lines = source.splitlines()
+            code  = "\n".join(lines[start_line - 1:end_line])
+
+        if not code or len(code) < 10:
+            continue
+
+        functions.append({
+            "name":       node.name,
+            "code":       code,
+            "start_line": start_line,
+            "end_line":   end_line,
+            "file_path":  file_path,
+        })
+
+    return functions
+
+
 def parse_c_file(file_path: str) -> list:
     """
     Parse a C/C++ source file and extract all function definitions.

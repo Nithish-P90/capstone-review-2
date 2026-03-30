@@ -19,7 +19,7 @@ def _truncate(text: str, max_chars: int = 512) -> str:
     return text[:max_chars] + "..." if len(text) > max_chars else text
 
 
-def query_dataset(code_snippet: str, cwe_id: str, top_k: int = 10) -> dict:
+def query_dataset(code_snippet: str, cwe_id: str, top_k: int = 10, language: str = "C") -> dict:
     """
     Query the security_dataset collection for code examples similar to
     `code_snippet` filtered to `cwe_id`.
@@ -31,7 +31,7 @@ def query_dataset(code_snippet: str, cwe_id: str, top_k: int = 10) -> dict:
             "top_matches": list of up to 3 payload dicts,
         }
     """
-    query_text = f"CWE: {cwe_id} | Language: C\n\n{_truncate(code_snippet)}"
+    query_text = f"CWE: {cwe_id} | Language: {language}\n\n{_truncate(code_snippet)}"
     query_vector = model.encode(query_text).tolist()
 
     response = client.query_points(
@@ -94,6 +94,7 @@ def query_dataset_bulk(candidates: list) -> list:
         verification = query_dataset(
             code_snippet=candidate["code_snippet"],
             cwe_id=candidate["cwe_id"],
+            language=candidate.get("language", "C"),
         )
         results.append({**candidate, "verification": verification})
     return results

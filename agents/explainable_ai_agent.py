@@ -16,12 +16,14 @@ def _format_cve_context(cve_matches: list) -> str:
     return "\n".join(lines)
 
 
-def build_explanation_prompt(code: str, cwe_id: str, description: str, cve_matches: list) -> str:
+def build_explanation_prompt(code: str, cwe_id: str, description: str,
+                             cve_matches: list, language: str = "C") -> str:
     cve_context = _format_cve_context(cve_matches)
+    lang_lower  = language.lower()
     return f"""You are a security educator explaining a vulnerability to a developer.
 
 Vulnerable code:
-```c
+```{lang_lower}
 {code}
 ```
 
@@ -48,6 +50,7 @@ def explain_finding(finding: dict) -> dict:
             finding["cwe_id"],
             finding["description"],
             finding.get("cve_matches", []),
+            language=finding.get("language", "C"),
         )
         explanation = call_ollama(prompt).strip()
     except RuntimeError as e:
