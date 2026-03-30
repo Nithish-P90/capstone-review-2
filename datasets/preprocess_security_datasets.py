@@ -80,7 +80,7 @@ def download_juliet():
 # ─── Juliet: parse functions ────────────────────────────────
 _FUNC_START = re.compile(
     r'^\s*(?:void|int|char\s*\*?|static\s+void)\s+'
-    r'(\w*(?:bad|good)\w*)\s*\([^)]*\)\s*$',
+    r'(\w*(?:bad|good)\w*)\s*\([^)]*\)\s*\{?\s*$',
     re.MULTILINE | re.IGNORECASE
 )
 
@@ -109,9 +109,9 @@ def extract_functions(file_path: Path):
         else:
             continue
 
-        # walk from the opening brace to find the full body
-        start = match.end()
-        brace_pos = text_flat.find("{", start)
+        # walk from the opening brace — search from match.start() to handle
+        # { on same line as signature or on the next line
+        brace_pos = text_flat.find("{", match.start())
         if brace_pos == -1:
             continue
 

@@ -34,15 +34,16 @@ def query_dataset(code_snippet: str, cwe_id: str, top_k: int = 10) -> dict:
     query_text = f"CWE: {cwe_id} | Language: C\n\n{_truncate(code_snippet)}"
     query_vector = model.encode(query_text).tolist()
 
-    results = client.search(
+    response = client.query_points(
         collection_name=COLLECTION_NAME,
-        query_vector=query_vector,
+        query=query_vector,
         query_filter=Filter(
             must=[FieldCondition(key="cwe_id", match=MatchValue(value=cwe_id))]
         ),
         limit=top_k,
         with_payload=True,
     )
+    results = response.points
 
     if not results:
         return {"verdict": "ambiguous", "confidence": 0.0, "top_matches": []}
