@@ -1,95 +1,99 @@
 # parsing/ast_parser.py
+# Uses regex + brace-depth walking to extract C/C++ function definitions.
+# This approach is dependency-free and works reliably on structured C code.
 
-import tree_sitter_c as tsc
-from tree_sitter import Language, Parser
+import re
 
-# Initialise once at import time (avoid repeated overhead)
-C_LANGUAGE = Language(tsc.language())
-_parser = Parser(C_LANGUAGE)
+# Matches standard C/C++ function signatures:
+#   return_type function_name(params) {   OR
+#   return_type function_name(params)\n{
+_FUNC_RE = re.compile(
+    r'^\s*'
+    r'(?:static\s+|inline\s+|extern\s+|__attribute__\s*\(.*?\)\s*)*'  # optional qualifiers
+    r'(?:const\s+)?'
+    r'(?:unsigned\s+|signed\s+|long\s+|short\s+)*'                    # type qualifiers
+    r'(?:void|int|char|float|double|long|short|bool|size_t|ssize_t'
+    r'|uint\w*|int\w*|FILE|struct\s+\w+|\w+_t|\w+)\s*\*{0,2}\s*'     # return type
+    r'(\w+)\s*'                                                         # function name ← group 1
+    r'\([^;{]*\)\s*\{?\s*$',                                           # params + optional {
+    re.MULTILINE,
+)
 
 
-def _find_function_name(node) -> str:
+def _extract_functions(text: str, file_path: str) -> list:
     """
-    Recursively walk a declarator node to find the identifier (function name).
-    tree-sitter C grammar nests: function_declarator → pointer_declarator → identifier
+    Extract function definitions from C/C++ source text using
+    regex matching + brace-depth walking.
     """
-    if node.type == "identifier":
-        return node.text.decode("utf-8")
-    for child in node.children:
-        result = _find_function_name(child)
-        if result:
-            return result
-    return ""
-
-
-def _extract_functions(tree, source_bytes: bytes, file_path: str) -> list:
-    """Walk the CST and collect all function_definition nodes."""
     functions = []
 
-    def walk(node):
-        if node.type == "function_definition":
-            # Find the declarator child to get the function name
-            name = ""
-            for child in node.children:
-                if child.type in ("function_declarator", "pointer_declarator",
-                                  "abstract_declarator", "declarator"):
-                    name = _find_function_name(child)
-                    if name:
-                        break
+    for match in _FUNC_RE.finditer(text):
+        func_name = match.group(1)
 
-            if not name:
-                # Last resort: grab first identifier in the node
-                for child in node.children:
-                    if child.type == "identifier":
-                        name = child.text.decode("utf-8")
-                        break
+        # Skip common false positives (macros, keywords mistaken for functions)
+        if func_name in {"if", "while", "for", "switch", "else", "return",
+                         "sizeof", "typedef", "struct", "enum", "union"}:
+            continue
 
-            start_line = node.start_point[0] + 1  # 0-indexed → 1-indexed
-            end_line   = node.end_point[0]   + 1
-            code       = source_bytes[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+        # Find opening brace — may be on same line as signature or next line
+        brace_pos = text.find("{", match.start())
+        if brace_pos == -1:
+            continue
 
-            functions.append({
-                "name":       name or "<anonymous>",
-                "code":       code,
-                "start_line": start_line,
-                "end_line":   end_line,
-                "file_path":  file_path,
-            })
+        # Walk braces to find matching closing brace
+        depth = 0
+        end_pos = brace_pos
+        for i in range(brace_pos, len(text)):
+            ch = text[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end_pos = i + 1
+                    break
+        else:
+            continue  # unmatched brace — skip
 
-        for child in node.children:
-            walk(child)
+        # Calculate 1-indexed line numbers
+        start_line = text[:match.start()].count("\n") + 1
+        end_line   = text[:end_pos].count("\n") + 1
+        code       = text[match.start():end_pos].strip()
 
-    walk(tree.root_node)
+        # Skip very short snippets (likely false positive matches)
+        if len(code) < 20 or code.count("\n") < 1:
+            continue
+
+        functions.append({
+            "name":       func_name,
+            "code":       code,
+            "start_line": start_line,
+            "end_line":   end_line,
+            "file_path":  file_path,
+        })
+
     return functions
 
 
 def parse_c_file(file_path: str) -> list:
     """
-    Parse a C/C++ source file and extract all top-level function definitions.
+    Parse a C/C++ source file and extract all function definitions.
 
     Parameters
     ----------
     file_path : str
-        Path to a .c or .cpp file.
+        Path to a .c, .cpp, or .h file.
 
     Returns
     -------
     list of dict with keys: name, code, start_line, end_line, file_path
-    Returns [] on any read or parse error.
+    Returns [] on any read error.
     """
     try:
-        source_bytes = open(file_path, "rb").read()
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
     except (OSError, IOError) as e:
         print(f"[ast_parser] Cannot read {file_path}: {e}")
         return []
 
-    try:
-        tree = _parser.parse(source_bytes)
-    except Exception as e:
-        print(f"[ast_parser] Parse error on {file_path}: {e}")
-        return []
-
-    if tree.root_node.has_error:
-        print(f"[ast_parser] Warning: parse errors in {file_path} — extracting what we can")
-
-    return _extract_functions(tree, source_bytes, file_path)
+    return _extract_functions(text, file_path)
