@@ -9,3 +9,8 @@ requests
 tqdm
 datasets
 huggingface_hub
+
+# AST parsing + pipeline agents + dashboard
+tree-sitter>=0.22.0
+tree-sitter-c>=0.22.0
+rich>=13.0.0
