@@ -22,3 +22,7 @@ last_run.json
 
 # Dataset raw downloads (Juliet ~200MB, BigVul cache)
 datasets/raw/
+
+# Virtual environment
+.venv/
+venv/

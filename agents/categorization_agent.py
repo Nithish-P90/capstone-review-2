@@ -21,20 +21,6 @@ TARGET_CWES = {
     "CWE-362", "CWE-78",  "CWE-20",
 }
 
-# Python CWEs (injection, deserialization, web security)
-PYTHON_TARGET_CWES = {
-    "CWE-89",   # SQL Injection
-    "CWE-79",   # Cross-site Scripting (XSS)
-    "CWE-22",   # Path Traversal
-    "CWE-502",  # Deserialization of Untrusted Data (pickle, yaml.load)
-    "CWE-94",   # Code Injection (eval, exec, compile)
-    "CWE-78",   # OS Command Injection (shared with C set)
-    "CWE-798",  # Hard-coded Credentials
-    "CWE-312",  # Cleartext Storage of Sensitive Information
-    "CWE-20",   # Improper Input Validation (shared with C set)
-    "CWE-918",  # Server-Side Request Forgery (SSRF)
-}
-
 # ─── Ollama wrapper ────────────────────────────────────────
 def call_ollama(prompt: str, timeout: int = OLLAMA_TIMEOUT) -> str:
     """
@@ -84,34 +70,7 @@ Respond with JSON ONLY — no explanation, no markdown, no extra text:
 If no vulnerabilities found: {{"vulnerabilities": []}}"""
 
 
-def _build_python_prompt(code: str) -> str:
-    return f"""You are a Python security vulnerability analyzer.
-
-Analyze this function for security vulnerabilities:
-```python
-{code}
-```
-
-Check for these vulnerability types ONLY:
-- CWE-89: SQL Injection (string-formatted queries, no parameterization)
-- CWE-79: Cross-site Scripting (unescaped user input in HTML output)
-- CWE-22: Path Traversal (user-controlled file paths, os.path.join with untrusted input)
-- CWE-502: Deserialization (pickle.loads, yaml.load without Loader, marshal.loads)
-- CWE-94: Code Injection (eval, exec, compile with user input)
-- CWE-78: OS Command Injection (subprocess, os.system with unsanitized input)
-- CWE-798: Hard-coded Credentials (passwords, API keys, tokens in source)
-- CWE-312: Cleartext Storage (sensitive data written to logs or files unencrypted)
-- CWE-20: Improper Input Validation (missing bounds/type checks on external input)
-- CWE-918: SSRF (user-controlled URLs passed to requests.get or urllib)
-
-Respond with JSON ONLY — no explanation, no markdown, no extra text:
-{{"vulnerabilities": [{{"cwe_id": "CWE-89", "severity": "HIGH", "description": "brief one-line reason"}}]}}
-If no vulnerabilities found: {{"vulnerabilities": []}}"""
-
-
 def build_categorization_prompt(code: str, language: str = "C") -> str:
-    if language == "Python":
-        return _build_python_prompt(code)
     return _build_c_prompt(code)
 
 # ─── JSON parser ───────────────────────────────────────────
@@ -150,7 +109,7 @@ def categorize_function(function_info: dict, language: str = "C") -> list:
         print(f"\n[categorization] Ollama error on {function_info['name']}: {e}")
         return []
 
-    active_cwes = PYTHON_TARGET_CWES if language == "Python" else TARGET_CWES
+    active_cwes = TARGET_CWES
 
     findings = []
     for vuln in parsed.get("vulnerabilities", []):

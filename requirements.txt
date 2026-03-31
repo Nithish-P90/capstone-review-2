@@ -1,16 +1,16 @@
-# NVD ingestion (teammates)
+# NVD ingestion
 nvdlib
 python-dotenv
 qdrant-client
 sentence-transformers
 
-# Security dataset preprocessing (this module)
+# Security datasets (Juliet, BigVul, PrimeVul)
 requests
 tqdm
 datasets
 huggingface_hub
 
-# AST parsing + pipeline agents + dashboard
+# Parsing + pipeline
 tree-sitter>=0.22.0
 tree-sitter-c>=0.22.0
 rich>=13.0.0

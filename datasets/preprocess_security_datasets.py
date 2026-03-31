@@ -6,7 +6,6 @@ import json
 import hashlib
 import zipfile
 from pathlib import Path
-from statistics import mean
 
 import requests
 from tqdm import tqdm
@@ -34,27 +33,6 @@ TARGET_CWES = {
     "CWE-476", "CWE-190", "CWE-191", "CWE-134",
     "CWE-362", "CWE-78",  "CWE-20",
 }
-
-# Python-specific CWEs
-PYTHON_TARGET_CWES = {
-    "CWE-89",   # SQL Injection
-    "CWE-79",   # Cross-site Scripting
-    "CWE-22",   # Path Traversal
-    "CWE-502",  # Deserialization (pickle, yaml.load)
-    "CWE-94",   # Code Injection (eval, exec)
-    "CWE-78",   # OS Command Injection
-    "CWE-798",  # Hard-coded Credentials
-    "CWE-312",  # Cleartext Storage
-    "CWE-20",   # Improper Input Validation
-    "CWE-918",  # SSRF
-}
-
-SARD_PYTHON_URL = (
-    "https://samate.nist.gov/SARD/downloads/test-suites/"
-    "2022-08-11-python-test-suite-116-v1-0.zip"
-)
-SARD_PYTHON_ZIP = RAW_DIR / "sard_python_116.zip"
-SARD_PYTHON_DIR = RAW_DIR / "sard_python"
 
 # ─── Clients ───────────────────────────────────────────────
 client = QdrantClient(host="localhost", port=6333)
@@ -106,10 +84,6 @@ _FUNC_START = re.compile(
 )
 
 def extract_functions(file_path: Path):
-    """
-    Extract labeled function bodies from a Juliet C/C++ test file.
-    Returns a list of {function_name, code_snippet, label}.
-    """
     try:
         text = file_path.read_text(errors="replace")
     except Exception:
@@ -121,7 +95,6 @@ def extract_functions(file_path: Path):
 
     for match in _FUNC_START.finditer(text_flat):
         func_name = match.group(1)
-        # determine label from function name
         name_lower = func_name.lower()
         if "bad" in name_lower:
             label = "vulnerable"
@@ -130,8 +103,6 @@ def extract_functions(file_path: Path):
         else:
             continue
 
-        # walk from the opening brace — search from match.start() to handle
-        # { on same line as signature or on the next line
         brace_pos = text_flat.find("{", match.start())
         if brace_pos == -1:
             continue
@@ -182,10 +153,7 @@ def preprocess_juliet():
         for func in extract_functions(file_path):
             snippet = truncate_snippet(func["code_snippet"])
             label = func["label"]
-            text = (
-                f"CWE: {cwe_id} | Language: {language} | Label: {label}\n\n"
-                f"{snippet}"
-            )
+            text = f"CWE: {cwe_id} | Language: {language} | Label: {label}\n\n{snippet}"
             content_key = f"{source}:{rel_path}:{func['function_name']}"
             stable_id = int(hashlib.md5(content_key.encode()).hexdigest()[:8], 16)
             all_data.append({
@@ -205,7 +173,7 @@ def preprocess_juliet():
     print(f"   → Extracted {len(all_data)} labeled functions from Juliet")
     return all_data
 
-# ─── BigVul: preprocess ─────────────────────────────────────
+# ─── Shared CWE normalizer ─────────────────────────────────
 def normalize_cwe(raw: str) -> str:
     """Normalize 'CWE-119', 'CWE119', '119' → 'CWE-NNN'."""
     if not raw:
@@ -213,10 +181,11 @@ def normalize_cwe(raw: str) -> str:
     m = re.search(r'(\d+)', str(raw))
     return f"CWE-{m.group(1)}" if m else "UNKNOWN"
 
+# ─── BigVul: preprocess ─────────────────────────────────────
 def preprocess_bigvul():
     print("\n=== Processing BigVul (HuggingFace) ===")
     try:
-        from datasets import load_dataset  # HuggingFace datasets
+        from datasets import load_dataset
     except ImportError:
         print("   ⚠️  'datasets' package not installed. Skipping BigVul.")
         return []
@@ -254,7 +223,6 @@ def preprocess_bigvul():
         cve_id = str(row.get("CVE ID") or row.get("cve_id") or "unknown")
         snippet = truncate_snippet(func)
         text = f"CWE: {cwe_id} | Language: C | Label: {label}\n\n{snippet}"
-
         content_key = f"bigvul:{cve_id}:{func[:32]}"
         stable_id = int(hashlib.md5(content_key.encode()).hexdigest()[:8], 16)
 
@@ -275,178 +243,68 @@ def preprocess_bigvul():
     print(f"   → Extracted {len(all_data)} labeled functions from BigVul")
     return all_data
 
-# ─── SARD Python: download ─────────────────────────────────
-def download_sard_python():
-    if SARD_PYTHON_DIR.exists():
-        print(f"ℹ️  SARD Python already extracted at {SARD_PYTHON_DIR}. Skipping download.")
-        return
-
-    RAW_DIR.mkdir(parents=True, exist_ok=True)
-
-    if not SARD_PYTHON_ZIP.exists():
-        print(f"⬇️  Downloading SARD Python Suite 116 (~50 MB)...")
-        response = requests.get(SARD_PYTHON_URL, stream=True, timeout=120)
-        response.raise_for_status()
-        total = int(response.headers.get("content-length", 0))
-        with open(SARD_PYTHON_ZIP, "wb") as f, tqdm(
-            total=total, unit="B", unit_scale=True, desc="sard_python_116.zip"
-        ) as bar:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-                bar.update(len(chunk))
-        print(f"✅ Downloaded to {SARD_PYTHON_ZIP}")
-
-    print(f"📦 Extracting SARD Python...")
-    with zipfile.ZipFile(SARD_PYTHON_ZIP, "r") as zf:
-        zf.extractall(SARD_PYTHON_DIR)
-    print(f"✅ Extracted to {SARD_PYTHON_DIR}")
-
-
-# ─── SARD Python: parse functions ──────────────────────────
-def extract_python_functions(file_path: Path):
-    """
-    Extract labeled function bodies from a SARD Python test file.
-    Uses stdlib ast module. Returns list of {function_name, code_snippet, label}.
-    bad* functions → "vulnerable", good* functions → "safe".
-    """
-    import ast as _ast
+# ─── PrimeVul: preprocess ──────────────────────────────────
+def preprocess_primevul():
+    print("\n=== Processing PrimeVul (HuggingFace) ===")
     try:
-        source = file_path.read_text(encoding="utf-8", errors="replace")
-    except Exception:
-        return []
-    try:
-        tree = _ast.parse(source, filename=str(file_path))
-    except SyntaxError:
+        from datasets import load_dataset
+    except ImportError:
+        print("   ⚠️  'datasets' package not installed. Skipping PrimeVul.")
         return []
 
-    results = []
-    for node in _ast.walk(tree):
-        if not isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+    source = "PrimeVul"
+    all_data = []
+
+    try:
+        print("   Loading dataset (may take a few minutes on first run)...")
+        ds = load_dataset("nqbinhcs/primevul", split="train", trust_remote_code=True)
+    except Exception as e:
+        print(f"   ❌ Failed to load PrimeVul: {e}")
+        return []
+
+    print(f"   Loaded {len(ds)} rows. Filtering to target CWEs...")
+
+    for row in tqdm(ds, desc="Parsing PrimeVul rows"):
+        # PrimeVul column names (try common variants)
+        func = row.get("func") or row.get("func_before") or row.get("code") or ""
+        if not func or not func.strip():
             continue
-        name_lower = node.name.lower()
-        if "bad" in name_lower:
+
+        cwe_raw = row.get("CWE") or row.get("cwe") or row.get("CWE ID") or row.get("cwe_id") or ""
+        cwe_id = normalize_cwe(cwe_raw)
+        if cwe_id not in TARGET_CWES:
+            continue
+
+        target = row.get("target", -1)
+        if target == 1:
             label = "vulnerable"
-        elif "good" in name_lower:
+        elif target == 0:
             label = "safe"
         else:
             continue
 
-        code = _ast.get_source_segment(source, node)
-        if code is None:
-            lines = source.splitlines()
-            end = getattr(node, "end_lineno", node.lineno)
-            code = "\n".join(lines[node.lineno - 1:end])
-        if not code or len(code) < 10:
-            continue
-        results.append({
-            "function_name": node.name,
-            "code_snippet": code,
-            "label": label,
+        cve_id = str(row.get("CVE_ID") or row.get("CVE ID") or row.get("cve_id") or "unknown")
+        snippet = truncate_snippet(func)
+        text = f"CWE: {cwe_id} | Language: C | Label: {label}\n\n{snippet}"
+        content_key = f"primevul:{cve_id}:{func[:32]}"
+        stable_id = int(hashlib.md5(content_key.encode()).hexdigest()[:8], 16)
+
+        all_data.append({
+            "id": stable_id,
+            "text": text,
+            "payload": {
+                "code_snippet": snippet,
+                "label": label,
+                "cwe_id": cwe_id,
+                "source": source,
+                "language": "C",
+                "function_name": "",
+                "file_path": cve_id,
+            },
         })
-    return results
 
-
-# ─── SARD Python: preprocess ───────────────────────────────
-def preprocess_sard_python():
-    print("\n=== Processing SARD Python Test Suite 116 ===")
-    source = "NIST_SARD_Python_v116"
-    all_data = []
-    files = list(SARD_PYTHON_DIR.rglob("*.py"))
-    print(f"   Found {len(files)} source files")
-
-    for file_path in tqdm(files, desc="Parsing SARD Python files"):
-        cwe_id = parse_cwe_from_path(file_path)
-        if cwe_id not in PYTHON_TARGET_CWES:
-            continue
-
-        rel_path = str(file_path.relative_to(SARD_PYTHON_DIR))
-
-        for func in extract_python_functions(file_path):
-            snippet = truncate_snippet(func["code_snippet"])
-            label = func["label"]
-            text = (
-                f"CWE: {cwe_id} | Language: Python | Label: {label}\n\n"
-                f"{snippet}"
-            )
-            content_key = f"{source}:{rel_path}:{func['function_name']}"
-            stable_id = int(hashlib.md5(content_key.encode()).hexdigest()[:8], 16)
-            all_data.append({
-                "id": stable_id,
-                "text": text,
-                "payload": {
-                    "code_snippet": snippet,
-                    "label": label,
-                    "cwe_id": cwe_id,
-                    "source": source,
-                    "language": "Python",
-                    "function_name": func["function_name"],
-                    "file_path": rel_path,
-                },
-            })
-
-    print(f"   → Extracted {len(all_data)} labeled functions from SARD Python")
+    print(f"   → Extracted {len(all_data)} labeled functions from PrimeVul")
     return all_data
-
-
-# ─── CVEfixes Python: preprocess ───────────────────────────
-def preprocess_cvefixes_python():
-    print("\n=== Processing CVEfixes Python (HuggingFace) ===")
-    try:
-        from datasets import load_dataset
-    except ImportError:
-        print("   ⚠️  'datasets' package not installed. Skipping CVEfixes.")
-        return []
-
-    source = "CVEfixes_Python"
-    all_data = []
-
-    try:
-        print("   Loading CVEfixes dataset (may take a few minutes on first run)...")
-        ds = load_dataset("msr-llm-reliability/CVEFixes", split="train", trust_remote_code=True)
-    except Exception as e:
-        print(f"   ❌ Failed to load CVEfixes: {e}")
-        return []
-
-    print(f"   Loaded {len(ds)} rows. Filtering to Python + target CWEs...")
-
-    for row in tqdm(ds, desc="Parsing CVEfixes rows"):
-        if (row.get("language") or "").lower() != "python":
-            continue
-
-        cwe_raw = row.get("cwe_id") or row.get("CWE ID") or ""
-        cwe_id = normalize_cwe(cwe_raw)
-        if cwe_id not in PYTHON_TARGET_CWES:
-            continue
-
-        func_before = row.get("func_before") or ""
-        func_after  = row.get("func_after")  or ""
-
-        cve_id = str(row.get("cve_id") or row.get("CVE ID") or "unknown")
-
-        for func_code, label in ((func_before, "vulnerable"), (func_after, "safe")):
-            if not func_code or not func_code.strip():
-                continue
-            snippet = truncate_snippet(func_code)
-            text = f"CWE: {cwe_id} | Language: Python | Label: {label}\n\n{snippet}"
-            content_key = f"cvefixes:{cve_id}:{label}:{func_code[:32]}"
-            stable_id = int(hashlib.md5(content_key.encode()).hexdigest()[:8], 16)
-            all_data.append({
-                "id": stable_id,
-                "text": text,
-                "payload": {
-                    "code_snippet": snippet,
-                    "label": label,
-                    "cwe_id": cwe_id,
-                    "source": source,
-                    "language": "Python",
-                    "function_name": "",
-                    "file_path": cve_id,
-                },
-            })
-
-    print(f"   → Extracted {len(all_data)} labeled functions from CVEfixes Python")
-    return all_data
-
 
 # ─── Shared helpers ────────────────────────────────────────
 def truncate_snippet(text: str, max_chars: int = 512) -> str:
@@ -516,12 +374,9 @@ if __name__ == "__main__":
 
     bigvul_data = preprocess_bigvul()
 
-    download_sard_python()
-    sard_python_data = preprocess_sard_python()
+    primevul_data = preprocess_primevul()
 
-    cvefixes_data = preprocess_cvefixes_python()
-
-    all_data = deduplicate(juliet_data + bigvul_data + sard_python_data + cvefixes_data)
+    all_data = deduplicate(juliet_data + bigvul_data + primevul_data)
 
     if not all_data:
         print("\n⚠️  No data to store. Exiting.")
